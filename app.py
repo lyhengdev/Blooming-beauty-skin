@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, send_from_directory
 import os
 import json
 import logging
@@ -71,6 +71,7 @@ MAX_CART_ITEM_QUANTITY = 100
 ADMIN_LOGIN_MAX_ATTEMPTS = 5
 ADMIN_LOGIN_LOCKOUT_SECONDS = 300
 DEFAULT_PRODUCT_CACHE_TTL_SECONDS = 10
+DEFAULT_PRODUCT_FILTER_CACHE_MAX_ENTRIES = 40
 
 app.config.update(
     JSON_SORT_KEYS=False,
@@ -100,7 +101,12 @@ def apply_security_headers(response):
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
-    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+    elif request.path in ('/service-worker.js', '/manifest.webmanifest', '/offline'):
+        response.headers['Cache-Control'] = 'no-cache'
+    else:
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
     return response
 
 
@@ -128,6 +134,10 @@ def safe_int(value, default=0):
 
 
 PRODUCT_CACHE_TTL_SECONDS = max(1, safe_int(os.getenv('PRODUCT_CACHE_TTL_SECONDS'), DEFAULT_PRODUCT_CACHE_TTL_SECONDS))
+PRODUCT_FILTER_CACHE_MAX_ENTRIES = max(
+    5,
+    safe_int(os.getenv('PRODUCT_FILTER_CACHE_MAX_ENTRIES'), DEFAULT_PRODUCT_FILTER_CACHE_MAX_ENTRIES)
+)
 
 
 def get_json_body():
@@ -515,6 +525,7 @@ class GoogleSheetsManager:
         self.spreadsheet = None
         self._products_cache = []
         self._products_cache_at = None
+        self._filtered_products_cache = {}
         self.connect()
     
     def connect(self):
@@ -541,6 +552,11 @@ class GoogleSheetsManager:
     def invalidate_products_cache(self):
         self._products_cache = []
         self._products_cache_at = None
+        self._filtered_products_cache = {}
+
+    def _prune_filtered_products_cache(self):
+        while len(self._filtered_products_cache) > PRODUCT_FILTER_CACHE_MAX_ENTRIES:
+            self._filtered_products_cache.pop(next(iter(self._filtered_products_cache)), None)
 
     def _products_cache_valid(self):
         if self._products_cache_at is None:
@@ -765,6 +781,47 @@ class GoogleSheetsManager:
         except Exception as e:
             logger.error(f"Error getting products: {e}")
             return []
+
+    def get_filtered_products(self, query: str = '', category: str = ''):
+        normalized_query = str(query or '').strip().lower()
+        normalized_category = str(category or '').strip().lower()
+        if normalized_category == 'all':
+            normalized_category = ''
+
+        cache_key = (normalized_query, normalized_category)
+        cached_entry = self._filtered_products_cache.get(cache_key)
+        if cached_entry and cached_entry.get('products_cache_at') == self._products_cache_at:
+            return [dict(item) for item in cached_entry.get('items', [])]
+
+        products = self.get_products()
+        if not normalized_query and not normalized_category:
+            return products
+
+        filtered = []
+        for product in products:
+            name = str(product.get('Name', ''))
+            product_category = str(product.get('Category', 'General'))
+            description = str(product.get('Description', ''))
+
+            if normalized_query:
+                searchable = f"{name} {product_category} {description}".lower()
+                if normalized_query not in searchable:
+                    continue
+
+            if normalized_category and product_category.lower() != normalized_category:
+                continue
+
+            filtered.append(product)
+
+        snapshot = [dict(item) for item in filtered]
+        if cache_key in self._filtered_products_cache:
+            self._filtered_products_cache.pop(cache_key, None)
+        self._filtered_products_cache[cache_key] = {
+            'items': snapshot,
+            'products_cache_at': self._products_cache_at
+        }
+        self._prune_filtered_products_cache()
+        return [dict(item) for item in snapshot]
     
     def add_product(self, product_data: dict):
         try:
@@ -978,6 +1035,23 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/manifest.webmanifest')
+def manifest():
+    return send_from_directory(app.static_folder, 'manifest.webmanifest', mimetype='application/manifest+json')
+
+
+@app.route('/service-worker.js')
+def service_worker():
+    response = send_from_directory(app.static_folder, 'service-worker.js', mimetype='application/javascript')
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
+
+@app.route('/offline')
+def offline():
+    return send_from_directory(app.static_folder, 'offline.html')
+
+
 @app.route('/health')
 def health():
     return jsonify({
@@ -1038,6 +1112,28 @@ def admin_logout():
 def get_products():
     products = sheets_manager.get_products()
     return jsonify(products)
+
+@app.route('/api/products/lazy')
+def get_products_lazy():
+    offset = max(0, safe_int(request.args.get('offset'), 0))
+    limit = safe_int(request.args.get('limit'), 24)
+    limit = min(100, max(1, limit))
+    query = request.args.get('q', '')
+    category = request.args.get('category', '')
+
+    filtered = sheets_manager.get_filtered_products(query=query, category=category)
+
+    total = len(filtered)
+    items = filtered[offset:offset + limit] if offset < total else []
+    has_more = (offset + len(items)) < total
+
+    return jsonify({
+        'items': items,
+        'offset': offset,
+        'limit': limit,
+        'total': total,
+        'has_more': has_more
+    })
 
 @app.route('/api/products/search')
 def search_products():

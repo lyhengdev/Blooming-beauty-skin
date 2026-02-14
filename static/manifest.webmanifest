@@ -1,0 +1,51 @@
+{
+  "name": "Blooming Beauty Skin",
+  "short_name": "Blooming",
+  "description": "Professional skincare POS for Blooming Beauty Skin.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fff8fd",
+  "theme_color": "#fcb4cf",
+  "lang": "en-US",
+  "categories": [
+    "business",
+    "shopping",
+    "beauty"
+  ],
+  "icons": [
+    {
+      "src": "/static/icons/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Open Products",
+      "short_name": "Products",
+      "url": "/?view=products",
+      "icons": [
+        {
+          "src": "/static/icons/pwa-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Go To Admin",
+      "short_name": "Admin",
+      "url": "/admin",
+      "icons": [
+        {
+          "src": "/static/icons/pwa-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

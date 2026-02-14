@@ -49,3 +49,16 @@ This project is compatible with `gunicorn` and includes `runtime.txt` for platfo
 ## Health Check
 
 - `GET /health` returns service status and Google Sheets connectivity.
+
+## Progressive Web App (PWA)
+
+- Manifest: `GET /manifest.webmanifest`
+- Service worker: `GET /service-worker.js`
+- Offline fallback page: `GET /offline`
+- Install UI:
+  - Android/Chrome/Edge: in-app `Install App` button appears when installable.
+  - iPhone/iPad Safari: in-app helper button shows Add to Home Screen instructions.
+
+Notes:
+- PWA works best on HTTPS (or `localhost` in development).
+- Current icon uses SVG (`static/icons/pwa-icon.svg`).

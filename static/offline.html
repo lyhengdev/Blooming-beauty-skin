@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline | Blooming Beauty Skin</title>
+    <style>
+        :root {
+            --pink: rgb(252, 180, 207);
+            --pink-deep: #e793b8;
+            --text: #4a2b3d;
+            --bg: #fff8fd;
+            --card: #fff;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 10% 10%, rgba(252, 180, 207, 0.45), transparent 50%),
+                radial-gradient(circle at 90% 90%, rgba(231, 147, 184, 0.35), transparent 44%),
+                var(--bg);
+            display: grid;
+            place-items: center;
+            padding: 18px;
+        }
+
+        .card {
+            width: min(520px, 100%);
+            background: var(--card);
+            border: 1px solid rgba(231, 147, 184, 0.36);
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(154, 84, 117, 0.2);
+            padding: 28px 24px;
+            text-align: center;
+        }
+
+        h1 {
+            margin: 0 0 12px;
+            font-size: 1.7rem;
+            line-height: 1.2;
+        }
+
+        p {
+            margin: 0 0 18px;
+            color: #6f4b61;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            border: none;
+            border-radius: 999px;
+            padding: 0.66rem 1rem;
+            min-height: 42px;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: linear-gradient(140deg, var(--pink), var(--pink-deep));
+            color: #5f2c49;
+        }
+
+        .btn-secondary {
+            background: #fcecf4;
+            color: #704a62;
+            border: 1px solid rgba(183, 108, 143, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <h1>Blooming Beauty Skin is Offline</h1>
+        <p>Your app is installed and working. Connect to the internet to sync products and orders.</p>
+        <div class="actions">
+            <button class="btn btn-primary" onclick="window.location.reload()">Try Again</button>
+            <a class="btn btn-secondary" href="/">Go Home</a>
+        </div>
+    </main>
+</body>
+</html>

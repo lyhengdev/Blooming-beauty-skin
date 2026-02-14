@@ -3,6 +3,20 @@ class POSSystem {
         this.cart = [];
         this.products = [];
         this.categories = {};
+        this.catalogTotalCount = 0;
+        this.currentQuery = '';
+        this.currentCategory = 'all';
+        this.nextOffset = 0;
+        this.hasMoreProducts = true;
+        this.isFetchingProducts = false;
+        this.productObserver = null;
+        this.bottomNavObserver = null;
+        this.cartSwipeState = null;
+        this.modalSwipeState = null;
+        this.hapticFlashOverlay = null;
+        this.hapticFlashTimer = null;
+        this.productPageSize = this.getProductPageSize();
+        this.deferredInstallPrompt = null;
         this.isOnline = navigator.onLine;
         this.lastOrder = null; // Store last order for invoice generation
         this.companyInfo = {
@@ -18,9 +32,13 @@ class POSSystem {
 
     async init() {
         this.setupOfflineHandling();
-        await Promise.all([this.loadProducts(), this.loadCart()]);
+        await Promise.all([this.loadCategories(), this.loadProducts({ reset: true }), this.loadCart()]);
         this.bindEvents();
-        this.renderProducts();
+        this.setupBottomNavigation();
+        this.setupDockMode();
+        this.setupGestureControls();
+        this.setupPWAFeatures();
+        this.setupInfiniteProducts();
         this.updateCartCount();
         this.setupKeyboardShortcuts();
         this.setupChangeCalculation();
@@ -39,6 +57,653 @@ class POSSystem {
         return String(value ?? '')
             .replace(/\\/g, '\\\\')
             .replace(/'/g, "\\'");
+    }
+
+    getProductPageSize() {
+        const width = window.innerWidth;
+        if (width <= 460) return 8;
+        if (width <= 760) return 12;
+        if (width <= 1180) return 16;
+        return 24;
+    }
+
+    setupInfiniteProducts() {
+        const anchor = document.getElementById('products-load-anchor');
+        if (!anchor || !('IntersectionObserver' in window)) {
+            return;
+        }
+
+        if (this.productObserver) {
+            this.productObserver.disconnect();
+        }
+
+        this.productObserver = new IntersectionObserver((entries) => {
+            const visible = entries.some(entry => entry.isIntersecting);
+            if (visible) {
+                this.loadProducts({ reset: false, silent: true });
+            }
+        }, {
+            rootMargin: '220px 0px',
+            threshold: 0.01
+        });
+
+        this.productObserver.observe(anchor);
+
+        window.addEventListener('resize', () => {
+            this.productPageSize = this.getProductPageSize();
+        });
+    }
+
+    setupBottomNavigation() {
+        const nav = document.getElementById('app-bottom-nav');
+        if (!nav) {
+            return;
+        }
+
+        const legacySearchButton = document.getElementById('search-btn');
+        if (legacySearchButton) {
+            legacySearchButton.remove();
+        }
+
+        nav.querySelectorAll('.app-nav-btn[data-nav-action="search"]').forEach((button) => {
+            button.remove();
+        });
+
+        nav.querySelectorAll('.app-nav-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                const action = String(button.dataset.navAction || '').trim();
+                if (!action) {
+                    return;
+                }
+                this.triggerBottomNavTap(button);
+                this.handleBottomNavAction(action);
+            });
+        });
+
+        this.setBottomNavActive('home');
+        this.syncPrimaryNavigation();
+
+        let navResizeRaf = null;
+        const onViewportChange = () => {
+            if (navResizeRaf) {
+                cancelAnimationFrame(navResizeRaf);
+            }
+            navResizeRaf = requestAnimationFrame(() => this.syncPrimaryNavigation());
+        };
+
+        window.addEventListener('resize', onViewportChange);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => this.syncPrimaryNavigation(), 120);
+        });
+    }
+
+    syncPrimaryNavigation() {
+        const nav = document.getElementById('app-bottom-nav');
+        const headerActions = document.querySelector('.header-actions');
+        if (!nav) {
+            return;
+        }
+
+        const prefersDockByWidth = window.innerWidth <= 1180;
+        const coarsePointer = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        const shouldUseDock = prefersDockByWidth || coarsePointer;
+
+        nav.style.display = shouldUseDock ? 'flex' : 'none';
+        if (headerActions) {
+            headerActions.style.display = shouldUseDock ? 'none' : '';
+        }
+    }
+
+    setupDockMode() {
+        const nav = document.getElementById('app-bottom-nav');
+        if (!nav) {
+            return;
+        }
+
+        const applyDockMode = () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const coarsePointer = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+            const tabletLikeViewport = coarsePointer && Math.min(width, height) >= 700 && Math.max(width, height) >= 1000;
+
+            nav.classList.remove('dock-compact', 'dock-expanded');
+            if (!tabletLikeViewport) {
+                return;
+            }
+
+            nav.classList.add(width > height ? 'dock-compact' : 'dock-expanded');
+        };
+
+        let resizeRaf = null;
+        const onResize = () => {
+            if (resizeRaf) {
+                cancelAnimationFrame(resizeRaf);
+            }
+            resizeRaf = requestAnimationFrame(applyDockMode);
+        };
+
+        applyDockMode();
+        window.addEventListener('resize', onResize);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(applyDockMode, 140);
+        });
+    }
+
+    setupGestureControls() {
+        const touchCapable = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        if (!touchCapable) {
+            return;
+        }
+
+        this.setupSwipeUpToOpenCart();
+        this.setupSwipeDownToCloseModal();
+    }
+
+    getHapticFlashOverlay() {
+        if (this.hapticFlashOverlay && document.body.contains(this.hapticFlashOverlay)) {
+            return this.hapticFlashOverlay;
+        }
+
+        let overlay = document.getElementById('haptic-flash-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'haptic-flash-overlay';
+            overlay.className = 'haptic-flash-overlay';
+            document.body.appendChild(overlay);
+        }
+
+        this.hapticFlashOverlay = overlay;
+        return overlay;
+    }
+
+    triggerHapticFeedback(origin = 'bottom') {
+        const nav = document.getElementById('app-bottom-nav');
+        if (nav) {
+            nav.classList.remove('haptic-pulse');
+            void nav.offsetWidth;
+            nav.classList.add('haptic-pulse');
+        }
+
+        const overlay = this.getHapticFlashOverlay();
+        if (overlay) {
+            overlay.style.setProperty('--flash-y', origin === 'modal' ? '48%' : '84%');
+            overlay.classList.remove('show');
+            void overlay.offsetWidth;
+            overlay.classList.add('show');
+
+            if (this.hapticFlashTimer) {
+                clearTimeout(this.hapticFlashTimer);
+            }
+            this.hapticFlashTimer = window.setTimeout(() => {
+                overlay.classList.remove('show');
+            }, 320);
+        }
+
+        if (typeof navigator.vibrate === 'function') {
+            try {
+                navigator.vibrate(10);
+            } catch (error) {
+                // Ignore unsupported vibration failures.
+            }
+        }
+    }
+
+    setupSwipeUpToOpenCart() {
+        const nav = document.getElementById('app-bottom-nav');
+        if (!nav) {
+            return;
+        }
+
+        const clearSwipeState = () => {
+            this.cartSwipeState = null;
+            nav.classList.remove('gesture-active');
+        };
+
+        document.addEventListener('touchstart', (event) => {
+            if (event.touches.length !== 1 || this.hasOpenModal()) {
+                return;
+            }
+
+            const touch = event.touches[0];
+            const activationZone = window.innerWidth <= 760 ? 96 : 116;
+            const nearBottom = touch.clientY >= (window.innerHeight - activationZone);
+            if (!nearBottom) {
+                return;
+            }
+
+            this.cartSwipeState = {
+                startX: touch.clientX,
+                startY: touch.clientY,
+                lastY: touch.clientY
+            };
+            nav.classList.add('gesture-active');
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (event) => {
+            if (!this.cartSwipeState || event.touches.length !== 1) {
+                return;
+            }
+
+            const touch = event.touches[0];
+            const dx = touch.clientX - this.cartSwipeState.startX;
+            const dy = touch.clientY - this.cartSwipeState.startY;
+            this.cartSwipeState.lastY = touch.clientY;
+
+            if (Math.abs(dx) > 74 && Math.abs(dx) > Math.abs(dy)) {
+                clearSwipeState();
+                return;
+            }
+
+            const reachedThreshold = dy < -86 && Math.abs(dy) > (Math.abs(dx) * 1.2);
+            if (reachedThreshold) {
+                clearSwipeState();
+                this.triggerHapticFeedback('bottom');
+                this.showCart();
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchend', clearSwipeState, { passive: true });
+        document.addEventListener('touchcancel', clearSwipeState, { passive: true });
+    }
+
+    setupSwipeDownToCloseModal() {
+        const isFormField = (target) => Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'));
+
+        document.addEventListener('touchstart', (event) => {
+            if (event.touches.length !== 1) {
+                return;
+            }
+
+            const modal = this.getTopOpenModal();
+            if (!modal) {
+                return;
+            }
+
+            const content = modal.querySelector('.modal-content');
+            if (!content || !content.contains(event.target)) {
+                return;
+            }
+
+            if (isFormField(event.target) || content.scrollTop > 4) {
+                return;
+            }
+
+            const touch = event.touches[0];
+            this.modalSwipeState = {
+                modal,
+                content,
+                startX: touch.clientX,
+                startY: touch.clientY,
+                lastY: touch.clientY,
+                moved: false
+            };
+
+            content.classList.remove('modal-swipe-release');
+            content.classList.add('modal-swipe-active');
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (event) => {
+            const state = this.modalSwipeState;
+            if (!state || event.touches.length !== 1) {
+                return;
+            }
+
+            const touch = event.touches[0];
+            const dx = touch.clientX - state.startX;
+            const dy = touch.clientY - state.startY;
+            state.lastY = touch.clientY;
+
+            if (dy <= 0) {
+                return;
+            }
+
+            if (Math.abs(dx) > (dy * 1.2)) {
+                this.resetModalSwipeState(true);
+                return;
+            }
+
+            const dragY = Math.min(130, dy * 0.58);
+            const scale = 1 - Math.min(0.045, dragY / 1200);
+            const opacity = 1 - Math.min(0.24, dragY / 320);
+
+            state.moved = true;
+            state.content.style.transform = `translateY(${dragY}px) scale(${scale})`;
+            state.content.style.opacity = String(opacity);
+        }, { passive: true });
+
+        const finishSwipe = () => {
+            const state = this.modalSwipeState;
+            if (!state) {
+                return;
+            }
+
+            const totalDy = (state.lastY ?? state.startY) - state.startY;
+            const shouldClose = state.moved && totalDy > 94;
+            const modalToClose = state.modal;
+
+            this.resetModalSwipeState(!shouldClose);
+            if (shouldClose) {
+                this.triggerHapticFeedback('modal');
+                this.closeModal(modalToClose);
+            }
+        };
+
+        document.addEventListener('touchend', finishSwipe, { passive: true });
+        document.addEventListener('touchcancel', () => this.resetModalSwipeState(true), { passive: true });
+    }
+
+    resetModalSwipeState(animateBack = false) {
+        if (!this.modalSwipeState) {
+            return;
+        }
+
+        const { content } = this.modalSwipeState;
+        if (content) {
+            if (animateBack) {
+                content.classList.add('modal-swipe-release');
+            }
+            content.style.transform = '';
+            content.style.opacity = '';
+
+            if (animateBack) {
+                setTimeout(() => {
+                    content.classList.remove('modal-swipe-release', 'modal-swipe-active');
+                }, 220);
+            } else {
+                content.classList.remove('modal-swipe-release', 'modal-swipe-active');
+            }
+        }
+
+        this.modalSwipeState = null;
+    }
+
+    getTopOpenModal() {
+        const openModals = [...document.querySelectorAll('.modal.show')].filter((modal) => !modal.classList.contains('hidden'));
+        return openModals.length > 0 ? openModals[openModals.length - 1] : null;
+    }
+
+    hasOpenModal() {
+        return Boolean(this.getTopOpenModal());
+    }
+
+    resetModalPresentation(modal) {
+        if (!modal) {
+            return;
+        }
+        const content = modal.querySelector('.modal-content');
+        if (!content) {
+            return;
+        }
+        content.style.transform = '';
+        content.style.opacity = '';
+        content.classList.remove('modal-swipe-active', 'modal-swipe-release');
+    }
+
+    openModal(modal) {
+        if (!modal) {
+            return;
+        }
+        this.resetModalPresentation(modal);
+        modal.classList.remove('hidden');
+        modal.classList.add('show');
+    }
+
+    closeModal(modal) {
+        if (!modal) {
+            return;
+        }
+        this.resetModalPresentation(modal);
+        if (!modal.id) {
+            modal.remove();
+            return;
+        }
+        modal.classList.add('hidden');
+        modal.classList.remove('show');
+        if (modal.id === 'cart-modal' || modal.id === 'checkout-modal') {
+            this.setBottomNavActive('home');
+        }
+    }
+
+    closeModalById(modalId) {
+        const modal = document.getElementById(modalId);
+        this.closeModal(modal);
+    }
+
+    showCheckoutModal() {
+        this.closeModal(document.getElementById('cart-modal'));
+        this.openModal(document.getElementById('checkout-modal'));
+        this.setBottomNavActive('cart');
+    }
+
+    setupPWAFeatures() {
+        this.registerServiceWorker();
+        this.setupInstallPrompt();
+    }
+
+    registerServiceWorker() {
+        if (!('serviceWorker' in navigator)) {
+            return;
+        }
+
+        const register = async () => {
+            try {
+                const registration = await navigator.serviceWorker.register('/service-worker.js');
+                registration.update().catch(() => {});
+
+                const requestImmediateActivation = (worker) => {
+                    if (!worker) return;
+                    worker.postMessage({ type: 'SKIP_WAITING' });
+                };
+
+                if (registration.waiting) {
+                    requestImmediateActivation(registration.waiting);
+                }
+
+                registration.addEventListener('updatefound', () => {
+                    const installingWorker = registration.installing;
+                    if (!installingWorker) return;
+                    installingWorker.addEventListener('statechange', () => {
+                        if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            requestImmediateActivation(installingWorker);
+                        }
+                    });
+                });
+
+                let reloadingForNewWorker = false;
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (reloadingForNewWorker) return;
+                    reloadingForNewWorker = true;
+                    window.location.reload();
+                });
+            } catch (error) {
+                console.error('Service worker registration failed:', error);
+            }
+        };
+
+        if (document.readyState === 'complete') {
+            register();
+            return;
+        }
+
+        window.addEventListener('load', register, { once: true });
+    }
+
+    setupInstallPrompt() {
+        const installButton = document.getElementById('install-app-btn');
+        if (!installButton) {
+            return;
+        }
+
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        if (isStandalone) {
+            return;
+        }
+
+        const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (isiOS) {
+            installButton.textContent = 'Add to Home Screen';
+            installButton.classList.remove('hidden');
+            installButton.classList.add('show');
+            installButton.addEventListener('click', () => {
+                this.showNotification('Tap Share in Safari, then choose Add to Home Screen.', 'info');
+            });
+            return;
+        }
+
+        window.addEventListener('beforeinstallprompt', (event) => {
+            event.preventDefault();
+            this.deferredInstallPrompt = event;
+            installButton.classList.remove('hidden');
+            installButton.classList.add('show');
+        });
+
+        installButton.addEventListener('click', async () => {
+            if (!this.deferredInstallPrompt) {
+                this.showNotification('Install is available from your browser menu.', 'info');
+                return;
+            }
+
+            this.deferredInstallPrompt.prompt();
+            try {
+                await this.deferredInstallPrompt.userChoice;
+            } catch (error) {
+                console.error('Install prompt failed:', error);
+            } finally {
+                this.deferredInstallPrompt = null;
+                installButton.classList.add('hidden');
+                installButton.classList.remove('show');
+            }
+        });
+
+        window.addEventListener('appinstalled', () => {
+            this.deferredInstallPrompt = null;
+            installButton.classList.add('hidden');
+            installButton.classList.remove('show');
+            this.showNotification('App installed successfully.', 'success');
+        });
+    }
+
+    triggerBottomNavTap(button) {
+        button.classList.remove('tap-pop');
+        void button.offsetWidth;
+        button.classList.add('tap-pop');
+    }
+
+    setBottomNavActive(action) {
+        const nav = document.getElementById('app-bottom-nav');
+        if (!nav) {
+            return;
+        }
+
+        nav.querySelectorAll('.app-nav-btn').forEach((button) => {
+            const isActive = button.dataset.navAction === action;
+            button.classList.toggle('is-active', isActive);
+            if (isActive) {
+                button.setAttribute('aria-current', 'page');
+            } else {
+                button.removeAttribute('aria-current');
+            }
+        });
+    }
+
+    async handleBottomNavAction(action) {
+        const categoriesSection = document.getElementById('categories-section');
+        const searchInput = document.getElementById('search-input');
+
+        if (action === 'home') {
+            this.setBottomNavActive('home');
+            this.hideCategories();
+            if (this.currentQuery || this.currentCategory !== 'all') {
+                this.currentQuery = '';
+                this.currentCategory = 'all';
+                if (searchInput) {
+                    searchInput.value = '';
+                }
+                await this.loadProducts({ reset: true, silent: true });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
+
+        if (action === 'search') {
+            this.setBottomNavActive('search');
+            this.hideCategories();
+            if (searchInput) {
+                searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                try {
+                    searchInput.focus({ preventScroll: true });
+                } catch (error) {
+                    searchInput.focus();
+                }
+            }
+            return;
+        }
+
+        if (action === 'categories') {
+            this.setBottomNavActive('categories');
+            categoriesSection?.classList.remove('hidden');
+            categoriesSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+
+        if (action === 'cart') {
+            this.showCart();
+            return;
+        }
+
+        if (action === 'admin') {
+            window.location.href = '/admin';
+        }
+    }
+
+    persistProductsToCache() {
+        const saveSnapshot = () => {
+            try {
+                localStorage.setItem('cached_products', JSON.stringify(this.products));
+            } catch (error) {
+                console.warn('Unable to persist product cache:', error);
+            }
+        };
+
+        if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(saveSnapshot, { timeout: 500 });
+            return;
+        }
+
+        setTimeout(saveSnapshot, 0);
+    }
+
+    setProductsLoadStatus(message = '', state = '') {
+        const status = document.getElementById('products-load-status');
+        if (!status) return;
+
+        if (!message) {
+            status.textContent = '';
+            status.dataset.state = '';
+            status.classList.add('hidden');
+            return;
+        }
+
+        status.textContent = message;
+        status.dataset.state = state;
+        status.classList.remove('hidden');
+    }
+
+    updateProductsTitle(totalCount = this.catalogTotalCount) {
+        const title = document.getElementById('products-title');
+        if (!title) return;
+
+        if (this.currentQuery.trim()) {
+            title.textContent = `Search: "${this.currentQuery}" (${totalCount})`;
+            return;
+        }
+
+        if (this.currentCategory && this.currentCategory !== 'all') {
+            title.textContent = `${this.currentCategory} (${totalCount})`;
+            return;
+        }
+
+        title.textContent = 'All Products';
     }
 
     setCheckoutTotal(total) {
@@ -132,36 +797,113 @@ class POSSystem {
         amountReceived.addEventListener('input', updateTotals);
     }
 
-    async loadProducts() {
-        try {
+    async loadProducts({ reset = false, silent = false } = {}) {
+        if (this.isFetchingProducts) {
+            return;
+        }
+        if (!reset && !this.hasMoreProducts) {
+            return;
+        }
+
+        this.isFetchingProducts = true;
+        if (!silent) {
             this.showLoading(true);
-            const response = await fetch('/api/products');
-            if (!response.ok) throw new Error('Failed to load products');
-            this.products = await response.json();
-            localStorage.setItem('cached_products', JSON.stringify(this.products));
-            this.loadCategories();
+        }
+
+        if (reset) {
+            this.nextOffset = 0;
+            this.hasMoreProducts = true;
+            this.products = [];
+            const grid = document.getElementById('products-grid');
+            if (grid) {
+                grid.innerHTML = '';
+            }
+            this.setProductsLoadStatus('Loading products...', 'loading');
+        } else {
+            this.setProductsLoadStatus('Loading more products...', 'loading');
+        }
+
+        try {
+            const params = new URLSearchParams({
+                offset: String(this.nextOffset),
+                limit: String(this.productPageSize)
+            });
+            if (this.currentQuery.trim()) {
+                params.set('q', this.currentQuery.trim());
+            }
+            if (this.currentCategory && this.currentCategory !== 'all') {
+                params.set('category', this.currentCategory);
+            }
+
+            const response = await fetch(`/api/products/lazy?${params.toString()}`);
+            const payload = await response.json();
+            if (!response.ok || !Array.isArray(payload.items)) {
+                throw new Error(payload.message || 'Failed to load products');
+            }
+
+            const incoming = payload.items;
+            this.catalogTotalCount = Number(payload.total) || 0;
+            this.hasMoreProducts = Boolean(payload.has_more);
+            this.nextOffset += incoming.length;
+
+            this.products = reset ? incoming : this.products.concat(incoming);
+            this.renderProducts(incoming, reset);
+            this.updateProductsTitle(this.catalogTotalCount);
+
+            this.persistProductsToCache();
+
+            if (this.hasMoreProducts) {
+                this.setProductsLoadStatus(`Showing ${this.products.length} of ${this.catalogTotalCount} products`, 'ready');
+            } else if (this.products.length === 0) {
+                this.setProductsLoadStatus('No products found', 'empty');
+            } else {
+                this.setProductsLoadStatus(`Loaded all ${this.products.length} products`, 'done');
+            }
         } catch (error) {
             console.error('Error loading products:', error);
-            this.showNotification('Failed to load products', 'error');
-            const cached = localStorage.getItem('cached_products');
-            if (cached) {
-                this.products = JSON.parse(cached);
-                this.showNotification('Loaded cached products', 'warning');
-                this.loadCategories();
+            if (reset) {
+                const cached = localStorage.getItem('cached_products');
+                if (cached) {
+                    this.products = JSON.parse(cached);
+                    this.catalogTotalCount = this.products.length;
+                    this.hasMoreProducts = false;
+                    this.renderProducts(this.products, true);
+                    this.updateProductsTitle(this.catalogTotalCount);
+                    this.setProductsLoadStatus('Loaded cached products (offline)', 'warning');
+                } else {
+                    this.showNotification('Failed to load products', 'error');
+                    this.setProductsLoadStatus('Unable to load products', 'error');
+                }
+            } else {
+                this.hasMoreProducts = false;
+                this.setProductsLoadStatus('Could not load more products. Try search again.', 'error');
             }
         } finally {
-            this.showLoading(false);
+            this.isFetchingProducts = false;
+            if (!silent) {
+                this.showLoading(false);
+            }
         }
     }
 
-    loadCategories() {
-        const categories = {};
-        this.products.forEach(product => {
-            const category = String(product.Category || 'General').trim() || 'General';
-            categories[category] = (categories[category] || 0) + 1;
-        });
-        this.categories = categories;
-        this.renderCategories();
+    async loadCategories() {
+        try {
+            const response = await fetch('/api/categories');
+            if (!response.ok) throw new Error('Failed to load categories');
+            this.categories = await response.json();
+            this.catalogTotalCount = Object.values(this.categories).reduce((sum, count) => sum + (Number(count) || 0), 0);
+            this.renderCategories();
+        } catch (error) {
+            console.error('Error loading categories:', error);
+            const categories = {};
+            this.products.forEach(product => {
+                const category = String(product.Category || 'General').trim() || 'General';
+                categories[category] = (categories[category] || 0) + 1;
+            });
+            this.categories = categories;
+            this.catalogTotalCount = Object.values(categories).reduce((sum, count) => sum + (Number(count) || 0), 0);
+            this.renderCategories();
+        }
     }
 
     async loadCart() {
@@ -188,16 +930,21 @@ class POSSystem {
                 if (e.target.value.trim()) {
                     this.searchProducts();
                 } else {
-                    this.renderProducts();
-                    document.getElementById('products-title').textContent = 'All Products';
+                    this.currentQuery = '';
+                    this.loadProducts({ reset: true, silent: true });
+                    this.setBottomNavActive(this.currentCategory !== 'all' ? 'categories' : 'home');
                 }
             }, 300);
         });
 
-        document.getElementById('search-btn').addEventListener('click', () => this.searchProducts());
-        
         document.getElementById('search-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.searchProducts();
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (e.target.value.length > 8) {
+                this.searchByBarcode(e.target.value);
+                return;
+            }
+            this.searchProducts();
         });
 
         // Categories
@@ -209,7 +956,8 @@ class POSSystem {
         // Modals
         document.querySelectorAll('.close').forEach(close => {
             close.addEventListener('click', (e) => {
-                e.target.closest('.modal').classList.add('hidden');
+                const modal = e.target.closest('.modal');
+                this.closeModal(modal);
             });
         });
 
@@ -217,7 +965,7 @@ class POSSystem {
         document.querySelectorAll('.modal').forEach(modal => {
             modal.addEventListener('click', (e) => {
                 if (e.target === modal) {
-                    modal.classList.add('hidden');
+                    this.closeModal(modal);
                 }
             });
         });
@@ -246,22 +994,38 @@ class POSSystem {
             this.emailInvoice();
         });
 
-        // Barcode scanner simulation
-        document.getElementById('search-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && e.target.value.length > 8) {
-                this.searchByBarcode(e.target.value);
-            }
-        });
+        // Barcode scanner simulation is handled by the Enter key logic above.
     }
 
-    searchByBarcode(barcode) {
-        const product = this.products.find(p => p.ID === barcode || String(p.Name || '').toLowerCase().includes(barcode.toLowerCase()));
+    async searchByBarcode(barcode) {
+        const normalized = String(barcode || '').trim();
+        if (!normalized) {
+            return;
+        }
+
+        let product = this.products.find(
+            p => p.ID === normalized || String(p.Name || '').toLowerCase().includes(normalized.toLowerCase())
+        );
+
+        if (!product) {
+            try {
+                const response = await fetch(`/api/products/search?q=${encodeURIComponent(normalized)}`);
+                const matches = await response.json();
+                if (response.ok && Array.isArray(matches) && matches.length > 0) {
+                    product = matches.find(p => p.ID === normalized) || matches[0];
+                }
+            } catch (error) {
+                console.error('Barcode search failed:', error);
+            }
+        }
+
         if (product) {
             this.addToCart(product.ID, null, 1);
             document.getElementById('search-input').value = '';
-        } else {
-            this.showNotification('Product not found', 'error');
+            return;
         }
+
+        this.showNotification('Product not found', 'error');
     }
 
     showLoading(show) {
@@ -271,25 +1035,39 @@ class POSSystem {
         }
     }
 
-    renderProducts(products = this.products) {
+    renderProducts(products = this.products, reset = true) {
         const grid = document.getElementById('products-grid');
-        grid.innerHTML = '';
-
-        if (products.length === 0) {
-            grid.innerHTML = '<div class="no-products">No products found</div>';
+        if (!grid) {
             return;
         }
 
-        products.forEach(product => {
-            const productCard = this.createProductCard(product);
-            grid.appendChild(productCard);
+        if (products.length === 0 && reset) {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'no-products';
+            emptyState.textContent = 'No products found';
+            grid.replaceChildren(emptyState);
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        products.forEach((product, index) => {
+            const productCard = this.createProductCard(product, index);
+            fragment.appendChild(productCard);
         });
+
+        if (reset) {
+            grid.replaceChildren(fragment);
+            return;
+        }
+
+        grid.appendChild(fragment);
     }
 
-    createProductCard(product) {
+    createProductCard(product, revealOrder = 0) {
         const card = document.createElement('div');
-        card.className = 'product-card';
+        card.className = 'product-card product-card-enter';
         card.setAttribute('data-product-id', product.ID);
+        card.style.setProperty('--reveal-order', String(Math.min(12, Math.max(0, revealOrder))));
 
         const stockClass = product.Stock > 10 ? 'stock-high' : product.Stock > 0 ? 'stock-medium' : 'stock-low';
         const stockText = product.Stock > 0 ? `${product.Stock} in stock` : 'Out of stock';
@@ -338,11 +1116,15 @@ class POSSystem {
         
         const allBtn = document.createElement('div');
         allBtn.className = 'category-btn';
-        allBtn.textContent = `All Products (${this.products.length})`;
-        allBtn.addEventListener('click', () => {
-            this.renderProducts();
-            document.getElementById('products-title').textContent = 'All Products';
+        const totalProducts = this.catalogTotalCount || Object.values(this.categories).reduce((sum, count) => sum + (Number(count) || 0), 0);
+        allBtn.textContent = `All Products (${totalProducts})`;
+        allBtn.addEventListener('click', async () => {
+            this.currentCategory = 'all';
+            this.currentQuery = '';
+            document.getElementById('search-input').value = '';
+            await this.loadProducts({ reset: true, silent: true });
             this.hideCategories();
+            this.setBottomNavActive('home');
         });
         categoriesList.appendChild(allBtn);
         
@@ -355,36 +1137,34 @@ class POSSystem {
         });
     }
 
-    searchProducts() {
+    async searchProducts() {
         const query = document.getElementById('search-input').value;
-        if (!query.trim()) {
-            this.renderProducts();
-            document.getElementById('products-title').textContent = 'All Products';
-            return;
-        }
-
-        const queryLower = query.toLowerCase();
-        const filtered = this.products.filter(product =>
-            String(product.Name || '').toLowerCase().includes(queryLower) ||
-            String(product.Category || '').toLowerCase().includes(queryLower) ||
-            String(product.Description || '').toLowerCase().includes(queryLower)
-        );
-        this.renderProducts(filtered);
-        document.getElementById('products-title').textContent = `Search Results for "${query}" (${filtered.length} found)`;
+        this.currentQuery = query.trim();
+        await this.loadProducts({ reset: true, silent: true });
+        this.setBottomNavActive(this.currentQuery ? 'search' : 'home');
     }
 
-    filterByCategory(category) {
-        const filtered = this.products.filter(
-            p => String(p.Category || 'General').toLowerCase() === String(category).toLowerCase()
-        );
-        this.renderProducts(filtered);
-        document.getElementById('products-title').textContent = `${category} (${filtered.length} products)`;
+    async filterByCategory(category) {
+        this.currentCategory = String(category || 'all');
+        await this.loadProducts({ reset: true, silent: true });
         this.hideCategories();
+        this.setBottomNavActive(this.currentCategory === 'all' ? 'home' : 'categories');
     }
 
     toggleCategories() {
         const categoriesSection = document.getElementById('categories-section');
         categoriesSection.classList.toggle('hidden');
+        if (categoriesSection.classList.contains('hidden')) {
+            if (this.currentQuery) {
+                this.setBottomNavActive('search');
+            } else if (this.currentCategory !== 'all') {
+                this.setBottomNavActive('categories');
+            } else {
+                this.setBottomNavActive('home');
+            }
+            return;
+        }
+        this.setBottomNavActive('categories');
     }
 
     hideCategories() {
@@ -444,12 +1224,23 @@ class POSSystem {
     updateCartCount() {
         const totalItems = this.cart.reduce((sum, item) => sum + item.quantity, 0);
         const cartCount = document.getElementById('cart-count');
-        cartCount.textContent = totalItems;
-        
-        if (totalItems > 0) {
-            cartCount.parentElement.classList.add('cart-has-items');
-        } else {
-            cartCount.parentElement.classList.remove('cart-has-items');
+        if (cartCount) {
+            cartCount.textContent = totalItems;
+        }
+
+        const topCartButton = cartCount?.parentElement;
+        if (topCartButton) {
+            if (totalItems > 0) {
+                topCartButton.classList.add('cart-has-items');
+            } else {
+                topCartButton.classList.remove('cart-has-items');
+            }
+        }
+
+        const bottomCartCount = document.getElementById('bottom-cart-count');
+        if (bottomCartCount) {
+            bottomCartCount.textContent = String(totalItems);
+            bottomCartCount.classList.toggle('visible', totalItems > 0);
         }
     }
 
@@ -459,8 +1250,8 @@ class POSSystem {
 
     showCart() {
         this.renderCart();
-        document.getElementById('cart-modal').classList.remove('hidden');
-        document.getElementById('cart-modal').classList.add('show');
+        this.setBottomNavActive('cart');
+        this.openModal(document.getElementById('cart-modal'));
     }
 
     renderCart() {
@@ -671,9 +1462,9 @@ async checkout() {
             this.updateCartCount();
             this.renderCart();
             this.saveCartToStorage();
-            
-            document.getElementById('cart-modal').classList.add('hidden');
-            document.getElementById('checkout-modal').classList.add('hidden');
+
+            this.closeModal(document.getElementById('cart-modal'));
+            this.closeModal(document.getElementById('checkout-modal'));
             
             this.showOrderSuccess(result.order_id, finalTotal);
             
@@ -728,8 +1519,7 @@ async checkout() {
         }
 
         this.generateInvoiceHTML();
-        document.getElementById('invoice-modal').classList.remove('hidden');
-        document.getElementById('invoice-modal').classList.add('show');
+        this.openModal(document.getElementById('invoice-modal'));
     }
 
 generateInvoiceHTML() {
@@ -1229,9 +2019,8 @@ generateInvoiceHTML() {
             return;
         }
 
-        document.getElementById('invoice-modal').classList.add('hidden');
-        document.getElementById('email-modal').classList.remove('hidden');
-        document.getElementById('email-modal').classList.add('show');
+        this.closeModal(document.getElementById('invoice-modal'));
+        this.openModal(document.getElementById('email-modal'));
         
         // Pre-fill subject
         document.getElementById('email-subject').value = `Invoice ${this.lastOrder.invoice_number} - ${this.companyInfo.name}`;
@@ -1270,7 +2059,7 @@ generateInvoiceHTML() {
 
             if (result.success) {
                 this.showNotification('Invoice sent successfully!', 'success');
-                document.getElementById('email-modal').classList.add('hidden');
+                this.closeModal(document.getElementById('email-modal'));
                 document.getElementById('email-form').reset();
             } else {
                 this.showNotification(result.message || 'Failed to send email', 'error');
@@ -1351,9 +2140,7 @@ const pos = new POSSystem();
 
 // Show checkout modal
 document.getElementById('checkout-btn').addEventListener('click', () => {
-    document.getElementById('cart-modal').classList.add('hidden');
-    document.getElementById('checkout-modal').classList.remove('hidden');
-    document.getElementById('checkout-modal').classList.add('show');
+    pos.showCheckoutModal();
 });
 
 // Add loading indicator to HTML
@@ -1361,7 +2148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loading = document.createElement('div');
     loading.id = 'loading';
     loading.innerHTML = '<div class="spinner">⚡</div> Loading...';
-    loading.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(145deg,#d84f8b,#b93873);color:#fff;padding:20px;border-radius:14px;box-shadow:0 16px 28px rgba(137,47,102,0.28);z-index:9999;display:none;';
+    loading.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(145deg,rgb(252,180,207),#e793b8);color:#5a2d4a;padding:20px;border-radius:14px;box-shadow:0 16px 28px rgba(184,106,143,0.28);z-index:9999;display:none;';
     document.body.appendChild(loading);
 });
 
