@@ -539,13 +539,31 @@ class POSSystem {
             return;
         }
 
-        const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        if (isiOS) {
-            installButton.textContent = 'Add to Home Screen';
+        const userAgent = navigator.userAgent || '';
+        const isIOS = /iphone|ipad|ipod/i.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isSafari = /safari/i.test(userAgent) && !/(chrome|crios|fxios|edgios|edg|opr|opera)/i.test(userAgent);
+        const isMacDesktopSafari = isSafari && /Macintosh/i.test(userAgent) && navigator.maxTouchPoints === 0;
+
+        if (isIOS) {
+            installButton.textContent = isSafari ? 'Add to Home Screen' : 'Open in Safari';
             installButton.classList.remove('hidden');
             installButton.classList.add('show');
             installButton.addEventListener('click', () => {
-                this.showNotification('Tap Share in Safari, then choose Add to Home Screen.', 'info');
+                if (!isSafari) {
+                    this.showNotification('Open this page in Safari, then tap Share > Add to Home Screen.', 'info');
+                    return;
+                }
+                this.showNotification('In Safari, tap Share, then Add to Home Screen.', 'info');
+            });
+            return;
+        }
+
+        if (isMacDesktopSafari) {
+            installButton.textContent = 'Add to Dock';
+            installButton.classList.remove('hidden');
+            installButton.classList.add('show');
+            installButton.addEventListener('click', () => {
+                this.showNotification('In Safari on Mac, use File > Add to Dock.', 'info');
             });
             return;
         }

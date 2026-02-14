@@ -1,4 +1,4 @@
-const SW_VERSION = "bbs-pwa-v2";
+const SW_VERSION = "bbs-pwa-v3";
 const STATIC_CACHE = `${SW_VERSION}-static`;
 const RUNTIME_CACHE = `${SW_VERSION}-runtime`;
 const OFFLINE_URL = "/offline";
@@ -8,7 +8,9 @@ const PRECACHE_URLS = [
     "/static/style.css",
     "/static/script.js",
     "/manifest.webmanifest",
-    "/static/icons/pwa-icon.svg"
+    "/static/icons/pwa-icon-192.png",
+    "/static/icons/pwa-icon-512.png",
+    "/static/icons/apple-touch-icon-180.png"
 ];
 
 self.addEventListener("install", (event) => {

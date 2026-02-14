@@ -58,7 +58,8 @@ This project is compatible with `gunicorn` and includes `runtime.txt` for platfo
 - Install UI:
   - Android/Chrome/Edge: in-app `Install App` button appears when installable.
   - iPhone/iPad Safari: in-app helper button shows Add to Home Screen instructions.
+  - macOS Safari: in-app helper button shows Add to Dock instructions.
 
 Notes:
 - PWA works best on HTTPS (or `localhost` in development).
-- Current icon uses SVG (`static/icons/pwa-icon.svg`).
+- Icons use PNG assets (`static/icons/pwa-icon-192.png`, `static/icons/pwa-icon-512.png`, `static/icons/apple-touch-icon-180.png`).
