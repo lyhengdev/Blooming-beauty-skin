@@ -1,0 +1,25 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+credentials.json
+*credentials*.json
+*service-account*.json
+robust-solution-*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store

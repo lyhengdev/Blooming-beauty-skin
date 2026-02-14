@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blooming Beauty Skin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand-block">
+                <p class="brand-kicker">Blooming Beauty Skin</p>
+                <h1>Radiant Skin Checkout Studio</h1>
+                <p class="brand-tagline">Curated skincare products, seamless sales, and beautiful service.</p>
+            </div>
+            <div class="header-actions">
+                <button id="cart-btn" class="btn btn-primary">
+                    Cart (<span id="cart-count">0</span>)
+                </button>
+                <a href="/admin" class="btn btn-secondary">Admin</a>
+            </div>
+        </header>
+
+        <div class="search-bar">
+            <input type="text" id="search-input" placeholder="Search skincare products...">
+            <button id="search-btn" class="btn">Search</button>
+            <button id="categories-btn" class="btn">Categories</button>
+        </div>
+
+        <div id="categories-section" class="categories hidden">
+            <h3>Categories</h3>
+            <div id="categories-list"></div>
+        </div>
+
+        <div id="products-section">
+            <h3 id="products-title">All Products</h3>
+            <div id="products-grid"></div>
+        </div>
+
+        <!-- Cart Modal -->
+        <div id="cart-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Your Beauty Cart</h2>
+                <div id="cart-items"></div>
+                <div class="cart-total">
+                    <h3>Total: $<span id="cart-total">0.00</span></h3>
+                </div>
+                <div class="cart-actions">
+                    <button id="clear-cart-btn" class="btn btn-danger">Clear Cart</button>
+                    <button id="checkout-btn" class="btn btn-success">Checkout</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Checkout Modal -->
+        <div id="checkout-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Complete Checkout</h2>
+                <form id="checkout-form">
+                    <div class="form-group">
+                        <label>Customer Name (Optional):</label>
+                        <input type="text" id="customer-name" placeholder="Walk-in Customer">
+                    </div>
+                    <div class="form-group">
+                        <label>Customer Phone (Optional):</label>
+                        <input type="text" id="customer-phone" placeholder="Phone number">
+                    </div>
+                    <div class="form-group">
+                        <label>Delivery Address (Optional):</label>
+                        <textarea id="customer-address" placeholder="Enter delivery address" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Discount Amount ($):</label>
+                        <input type="number" id="discount-amount" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Delivery Fee ($):</label>
+                        <input type="number" id="delivery-fee" placeholder="0.00" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Print Size:</label>
+                        <select id="print-size">
+                            <option value="80mm">80mm (Thermal Receipt)</option>
+                            <option value="100mm">100mm (Wide Thermal)</option>
+                            <option value="A4">A4 (Standard Paper)</option>
+                            <option value="A5">A5 (Half Letter)</option>
+                            <option value="letter">Letter (US Standard)</option>
+                        </select>
+                    </div>
+                    <div class="checkout-summary">
+                        <div class="summary-line">
+                            <span>Subtotal: $<span id="checkout-subtotal">0.00</span></span>
+                        </div>
+                        <div class="summary-line">
+                            <span>Discount: -$<span id="checkout-discount">0.00</span></span>
+                        </div>
+                        <div class="summary-line">
+                            <span>Delivery: $<span id="checkout-delivery">0.00</span></span>
+                        </div>
+                        <div class="checkout-total">
+                            <h3>Final Total: $<span id="checkout-total">0.00</span></h3>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Payment Method:</label>
+                        <select id="payment-method">
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Digital">Digital Wallet</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Amount Received:</label>
+                        <input type="number" id="amount-received" placeholder="Enter amount" step="0.01" min="0">
+                        <small id="change-amount" class="change-display"></small>
+                    </div>
+                    <div class="checkout-total">
+                        <h3>Total: $<span id="checkout-total-confirm">0.00</span></h3>
+                    </div>
+                    <button type="submit" class="btn btn-success btn-large">Complete Order</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Invoice Modal -->
+        <div id="invoice-modal" class="modal hidden">
+            <div class="modal-content invoice-modal-content">
+                <div class="invoice-header">
+                    <span class="close">&times;</span>
+                    <div class="invoice-actions">
+                        <button id="print-invoice-btn" class="btn btn-primary">Print Invoice</button>
+                        <button id="download-invoice-btn" class="btn btn-secondary">Download PDF</button>
+                        <button id="email-invoice-btn" class="btn btn-info">Email Invoice</button>
+                    </div>
+                </div>
+                <div id="invoice-content" class="invoice-content">
+                    <!-- Invoice content will be inserted here -->
+                </div>
+                <div class="invoice-footer">
+                    <button class="btn btn-success" onclick="document.getElementById('invoice-modal').classList.add('hidden')">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Email Invoice Modal -->
+        <div id="email-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Email Invoice</h2>
+                <form id="email-form">
+                    <div class="form-group">
+                        <label>Customer Email:</label>
+                        <input type="email" id="email-address" placeholder="customer@example.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Subject:</label>
+                        <input type="text" id="email-subject" value="Your invoice from Blooming Beauty Skin">
+                    </div>
+                    <div class="form-group">
+                        <label>Message:</label>
+                        <textarea id="email-message" rows="4" placeholder="Thank you for your purchase!">Dear Customer,
+
+Please find your invoice attached.
+
+Thank you for your business!
+
+Best regards,
+Blooming Beauty Skin</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Send Email</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden print iframe for invoice printing -->
+    <iframe id="print-frame" style="display: none;"></iframe>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
